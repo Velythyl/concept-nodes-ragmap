@@ -89,7 +89,7 @@ def main(cfg: DictConfig):
     if not cfg.save_map:
         return
 
-    output_dir = Path(cfg.output_dir) / "concept-graphs" /  dataset.dataset_name / dataset.scene
+    output_dir = Path(cfg.output_dir) / f"concept-graphs_{str(cfg.sim_thresh).split('.')[1]}" /  dataset.dataset_name / dataset.scene
     # Make dire
     if output_dir.exists():
         log.warning(f"Output directory {output_dir} already exists. Overwriting...")
