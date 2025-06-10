@@ -14,3 +14,6 @@ final_min_segments: 3
 
 mapping:
   n_min_segments: 3
+
+vlm_tag:
+  allow_no_object_pred: false

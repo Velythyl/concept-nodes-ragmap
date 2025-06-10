@@ -6,6 +6,7 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
@@ -21,6 +22,7 @@ log = logging.getLogger(__name__)
 @hydra.main(version_base=None, config_path="conf", config_name="main")
 def main(cfg: DictConfig):
     set_seed(cfg.seed)
+    assert cfg.tag, "Tagging is required on this branch"
 
     log.info(f"Running algo {cfg.name}...")
 
@@ -89,14 +91,23 @@ def main(cfg: DictConfig):
     if not cfg.save_map:
         return
 
-    output_dir = Path(cfg.output_dir) / f"concept-graphs_{str(cfg.sim_thresh).split('.')[1]}" /  dataset.dataset_name / dataset.scene
+    output_dir = Path(cfg.output_dir) / f"concept-graphs_vlm" /  dataset.dataset_name / dataset.scene
     # Make dire
     if output_dir.exists():
         log.warning(f"Output directory {output_dir} already exists. Overwriting...")
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
 
-    main_map.export_openlex3d(output_dir)
+    tags = main_map.export_openlex3d(output_dir)
+
+    # Embed all tags with CLIP
+    tag_embeddings = perception_pipeline.ft_extractor.encode_text(tags).cpu().numpy()
+
+    # Move embeddings.npy 
+    shutil.move(output_dir / "embeddings.npy", output_dir / "embeddings_vision.npy")
+
+    # Save tag embeddings as new embeddings.npy
+    np.save(output_dir / "embeddings.npy", tag_embeddings)
 
     # now = datetime.datetime.now()
     # date_time = now.strftime("%Y-%m-%d-%H-%M-%S.%f")

@@ -410,6 +410,8 @@ class ObjectMap:
         with open(path / "tags.json", "w") as f:
             json.dump(json_data, f)
 
+        return tags
+
     def to(self, device: str):
         self.device = device
         if self.semantic_tensor is not None:
