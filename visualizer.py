@@ -8,11 +8,18 @@ from pathlib import Path
 import numpy as np
 import open3d as o3d
 import open3d.visualization.gui as gui
+import open3d.visualization.rendering as rendering
 import copy
 
 from concept_graphs.utils import load_map, set_seed
 from concept_graphs.viz.utils import similarities_to_rgb
 from concept_graphs.mapping.similarity.semantic import CosineSimilarity01
+import threading
+import os
+import sys
+import time
+
+
 
 # A logger for this file
 log = logging.getLogger(__name__)
@@ -69,15 +76,21 @@ class CallbackManager:
         if self.mode == "keycallback":
             for geometry in geometries:
                 vis.add_geometry(geometry)
-        elif self.mode == "gui":
+        elif self.mode in ["gui"]:
             for name, geometry in zip(geometry_names, geometries):
                 vis.add_geometry(name, geometry)
+        elif self.mode in ["audio", "offline_screenshot"]:
+            # vis is the OffscreenRenderer.scene
+            for name, geometry in zip(geometry_names, geometries):
+                mat = rendering.MaterialRecord()
+                mat.shader = "defaultUnlit"
+                vis.add_geometry(name, geometry, mat)
 
     def remove_geometries(self, vis, geometry_names, geometries):
         if self.mode == "keycallback":
             for geometry in geometries:
                 vis.remove_geometry(geometry)
-        elif self.mode == "gui":
+        elif self.mode in ["gui", "audio", "offline_screenshot"]:
             for name in geometry_names:
                 vis.remove_geometry(name)
 
@@ -85,7 +98,7 @@ class CallbackManager:
         if self.mode == "keycallback":
             for geometry in geometries:
                 vis.update_geometry(geometry)
-        elif self.mode == "gui":
+        elif self.mode in ["gui", "audio", "offline_screenshot"]:
             self.remove_geometries(vis, geometry_names, geometries)
             self.add_geometries(vis, geometry_names, geometries)
 
@@ -112,7 +125,7 @@ class CallbackManager:
         self.number_toggle = not self.number_toggle
 
     def toggle_sim(self, vis):
-        rgb = similarities_to_rgb(self.sim_query, cmap_name="viridis")
+        rgb = similarities_to_rgb(self.sim_query, cmap_name="inferno")
         for p, c, color in zip(self.pcd, self.centroids, rgb):
             p.paint_uniform_color(np.array(color) / 255)
             c.paint_uniform_color(np.array(color) / 255)
@@ -133,11 +146,12 @@ class CallbackManager:
             p.colors = c
         self.update_geometries(vis, self.pcd_names, self.pcd)
 
-    def query(self, vis):
+    def query(self, vis, query=None):
         if self.ft_extractor is None:
             log.warning("No feature extractor provided.")
             return
-        query = input("Enter query: ")
+        if query is None:
+            query = input("Enter query: ")
         query_ft = self.ft_extractor.encode_text([query])
         self.sim_query = self.semantic_sim(query_ft, self.semantic_tensor)
         self.sim_query = self.sim_query.squeeze().cpu().numpy()
@@ -230,6 +244,127 @@ def main(cfg: DictConfig):
 
         app.add_window(vis)
         app.run()
+    elif cfg.mode == "audio":
+        app = gui.Application.instance
+        app.initialize()
+        window = gui.Application.instance.create_window(
+            "Open3D", 1024, 768)
+        w = window
+
+        # 3D widget
+        _scene = gui.SceneWidget()
+        _scene.scene = rendering.Open3DScene(w.renderer)
+
+        em = w.theme.font_size
+        separation_height = int(round(0.5 * em))
+        chat_panel = gui.Vert(
+            0, gui.Margins(0.25 * em, 0.25 * em, 0.25 * em, 0.25 * em))
+        chat_panel.add_child(gui.Label("Rise Orchestration"))
+
+        # Initialize fake chat history
+        chat_history = [
+            {"user": "Alice", "message": "Can you identify the objects in this scene?"},
+            {"user": "Bob", "message": "I see several furniture items and decorations."},
+            {"user": "Alice", "message": "What are the colors of the dominant objects?"},
+            {"user": "Bob", "message": "The main colors are brown, white, and gray."},
+            {"user": "Alice", "message": "Thanks for the analysis!"}
+        ]
+
+        # Define colors for each user
+        user_colors = {
+            "Alice": gui.Color(0.2, 0.4, 0.8, 1.0),  # Blue
+            "Bob": gui.Color(0.8, 0.2, 0.2, 1.0),    # Red
+        }
+
+        messages_to_show = chat_history[-5:] if len(chat_history) > 5 else chat_history
+        for chat in messages_to_show:
+            msg_label = gui.Label(f"{chat['user']}: {chat['message']}")
+            user = chat['user']
+            if user in user_colors:
+                msg_label.text_color = user_colors[user]
+            chat_panel.add_child(msg_label)
+        chat_panel.add_fixed(separation_height)
+
+        def _on_layout(layout_context):
+            r = window.content_rect
+            _scene.frame = r
+            width = 24 * layout_context.theme.font_size
+            height = min(
+                r.height,
+                2 * chat_panel.calc_preferred_size(
+                    layout_context, gui.Widget.Constraints()).height)
+            chat_panel.frame = gui.Rect(r.get_right() - width, r.y, width, height)
+        w.set_on_layout(_on_layout)
+        w.add_child(_scene)
+        w.add_child(chat_panel)
+
+        manager.add_geometries(_scene.scene, manager.pcd_names, manager.pcd )
+
+        render_app = lambda : app.run_one_tick()
+
+        from openai import OpenAI
+        import openai
+        openai.api_key = os.getenv("OPENAI_API_KEY")
+        client = OpenAI()
+        from listen_for_keyword import VoskModel
+        vosk_model = VoskModel(f"{cfg.cache_dir}/vosk")
+
+        audio_routine_results = []
+        def run_audio_routine():
+            hit = vosk_model.listen_for_keywords(keywords=["hey", "rise"])
+            hit, record_file = vosk_model.listen_for_keywords(keywords=["please"], record=True)
+
+            with open(record_file, "rb") as open_record_file:
+                transcription = client.audio.transcriptions.create(
+                    model="gpt-4o-transcribe",
+                    file=open_record_file,
+                    response_format="text"
+                )
+
+            audio_routine_results.append(transcription)
+            print(transcription)
+        audio_routine = threading.Thread(target=run_audio_routine)
+        audio_routine.start()
+        while True:
+            if not audio_routine.is_alive():
+                query = audio_routine_results.pop()
+                manager.query(_scene.scene, query)
+                render_app()
+                audio_routine = threading.Thread(target=run_audio_routine)
+                audio_routine.start()
+
+            render_app()
+            time.sleep(0.1)
+
+
+    elif cfg.mode == "offline_screenshot":
+        width, height = 1024, 768
+        vis = rendering.OffscreenRenderer(width, height)
+        scene = vis.scene
+        scene.set_background([1.0, 1.0, 1.0, 1.0])
+
+        # Add all point clouds using CallbackManager
+        manager.add_geometries(scene, manager.pcd_names, manager.pcd)
+
+        # Camera setup: fit to geometry
+        bounds = scene.bounding_box
+        center = bounds.get_center()
+        extent = bounds.get_extent()
+        eye = center + [0, 0, max(extent)]
+        up = [0, 1, 0]
+        scene.camera.look_at(center, eye, up)
+
+        # --- RGB screenshot ---
+        manager.toggle_rgb(scene)
+        img = vis.render_to_image()
+        o3d.io.write_image(str(path / "cg_rgb.png"), img)
+
+        # --- Random color screenshot ---
+        manager.toggle_random_color(scene)
+        img = vis.render_to_image()
+        o3d.io.write_image(str(path / "cg_random_color.png"), img)
+
+        print("Screenshots taken (headless).")
 
     else:
         raise ValueError("Invalid mode.")

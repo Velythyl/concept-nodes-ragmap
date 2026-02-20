@@ -9,6 +9,7 @@ import cv2
 from .Object import Object, ObjectFactory
 from .similarity.Similarity import Similarity
 from .utils import pairs_to_connected_components
+from ..torch_utils import np_to_torch
 
 
 class ObjectMap:
@@ -118,9 +119,9 @@ class ObjectMap:
     def collate_geometry(self):
         if len(self):
             self.pcd_tensors = [
-                torch.from_numpy(p).to(self.device) for p in self.pcd_np
+                np_to_torch(p).to(self.device) for p in self.pcd_np
             ]
-            self.centroid_tensor = torch.from_numpy(self.centroids_np).to(self.device)
+            self.centroid_tensor = np_to_torch(self.centroids_np).to(self.device)
         else:
             self.object_pcds = None
             self.centroid_tensor = None
@@ -364,19 +365,33 @@ class ObjectMap:
 
         # Save object images
         for i, obj in enumerate(self):
+
             path_rgb = path / "segments" / str(i) / "rgb"
             path_mask = path / "segments" / str(i) / "mask"
+            path_masked = path / "segments" / str(i) / "masked"
             os.makedirs(path_rgb, exist_ok=True)
             os.makedirs(path_mask, exist_ok=True)
+            os.makedirs(path_masked, exist_ok=True)
 
             for j, seg in enumerate(obj.segments.get_sorted()):
                 rgb = seg.rgb
                 mask = seg.mask * 255
+
                 cv2.imwrite(
                     str(path_rgb / f"{str(j).zfill(3)}.png"),
                     cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR),
                 )
                 cv2.imwrite(str(path_mask / f"{str(j).zfill(3)}.png"), mask)
+
+                # Create RGBA image with transparent background
+                rgba = np.zeros((rgb.shape[0], rgb.shape[1], 4), dtype=np.uint8)
+                rgba[..., :3] = rgb
+                rgba[..., 3] = mask  # Alpha channel
+
+                cv2.imwrite(
+                    str(path_masked / f"{str(j).zfill(3)}.png"),
+                    cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGRA),
+                )
 
     def to(self, device: str):
         self.device = device

@@ -30,15 +30,18 @@ output_dir: ??? # Where to save outputs
 ```
 Alternatively, you can create your own `conf/paths/my_paths.yaml` and append `paths=my_paths` to all commands.
 
+It is recommended to put your paths on a filesystem with ample storage (such as a cluster's `$SCRATCH`).
+
 ## Model Checkpoints
 Download the following to ```cache_dir```, as defined in your config.
  * [mobile_sam.pt](https://github.com/ultralytics/assets/releases/download/v8.2.0/mobile_sam.pt)
  * [yolov8s-world.pt](https://github.com/ultralytics/assets/releases/download/v8.2.0/yolov8s-world.pt)
  * [scannet200_classes.txt](https://raw.githubusercontent.com/concept-graphs/concept-graphs/66175d63f466d264edce9f1fb6987c5ba1dcac0e/conceptgraph/scannet200_classes.txt)
+ * If you want to use the audio interface, download any [vosk model weights](https://alphacephei.com/vosk/models) and rename it to `vosk`
 
 ## Example Data
 You can download the Replica dataset to `data_dir` using the 
-[download script](https://github.com/cvg/nice-slam/blob/master/scripts/download_replica.sh) from Nice-SLAM.
+[download script](https://github.com/cvg/nice-slam/blob/master/scripts/download_replica.sh) from Nice-SLAM, followed by `mv Replica <cache_dir>`
 
 # Usage
 ## Quickstart

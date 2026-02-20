@@ -2,6 +2,7 @@ defaults:
   - algo: ???
   - dataset: ???
   - paths: paths
+  - mapping/DuplicateFilter@duplicate_filter
   - _self_
 
 name: ???
@@ -12,11 +13,15 @@ denoising_eps: ???
 max_points_pcd: ???
 final_min_segments: ???
 
-device: cuda
+device: cpu
 debug: false
 caption: false
 tag: false
 save_map: true
+save_videos: true
+save_dense: false
+dense_culling_freq: null
+filter_duplicates: true
 seed: 123
 
 dataloader:

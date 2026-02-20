@@ -2,19 +2,26 @@
 name = "concept-graphs"
 version = "0.0.0"
 dependencies = [
-    "torch",
-    "torchvision",
     "open3d",
     "hydra-core",
+    "openai",
+    "numpy<=1.26.4",
+    "sounddevice>=0.5.3",
+    "viser",
+    "langchain",
+    "langchain_openai"
+]
+requires-python = "==3.10.*"
+
+[project.optional-dependencies]
+concept_graphs = [
+    "torch",
+    "torchvision",
     "mobile_sam@git+https://github.com/ChaoningZhang/MobileSAM.git",
     "open_clip_torch",
     "ultralytics",
-    "openai",
-    "numpy<=1.26.4",
+    "clip@git+https://github.com/ultralytics/CLIP.git"
 ]
-requires-python = ">=3.10"
-
-[project.optional-dependencies]
 dev = ["black"]
 
 
