@@ -189,7 +189,9 @@ def export_objects(main_map, output: Path, captioned: bool) -> Dict[str, Any]:
         vlm_background = captioned and str(obj.tag).strip().lower() == "background"
 
         if tag:
-            label, label_source = tag, "vlm_tag"
+            # Lower-cased so VLM labels read like detector classes ("Coat" -> "coat");
+            # extra.vlm_tag keeps the raw answer.
+            label, label_source = tag.lower(), "vlm_tag"
             counts["labels_from_vlm"] += 1
         elif detector_label:
             label, label_source = detector_label, "detector"
