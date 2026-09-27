@@ -78,15 +78,16 @@ class YoloMobileSAM(SegmentationModel):
                 for c in yolo_output[0].boxes.cls.cpu().numpy()
             ]
 
+            # No detections: bail out before transforming an empty box array.
+            if len(bbox) == 0:
+                return None, None, None
+
             bbox_transformed = self.sam_predictor.transform.apply_boxes(
                 bbox, original_size=img.shape[:2]
             )
             bbox_transformed = (
                 torch.from_numpy(bbox_transformed).to(torch.int).to(self.sam_device)
             )
-
-            if len(bbox) == 0:
-                return None, None, None
 
             self.sam_predictor.set_image(img)
             if self.sam_prompting == "bbox":

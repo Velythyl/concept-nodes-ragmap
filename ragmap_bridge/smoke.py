@@ -1,4 +1,5 @@
-"""`ragmap-smoke`: end-to-end check of `ragmap-run` on a synthetic 5-frame scene.
+"""`ragmap-smoke`: end-to-end check of `ragmap-run` on a synthetic 5-frame scene
+(plus one blank frame with no detections).
 
 Runs inside the image, CPU-only, with no network access to any VLM:
 
@@ -32,6 +33,8 @@ import numpy as np
 FAKE_PROFILE = "fake_profile"
 CAMERA_ORIGIN = np.array([1.0, 2.0, 0.5])
 DEPTH_M = 4.0
+BLANK_FRAME_INDEX = 99
+N_FRAMES = 5  # plus one blank frame
 
 
 def make_scene(root: Path, n_frames: int = 5) -> None:
@@ -65,6 +68,21 @@ def make_scene(root: Path, n_frames: int = 5) -> None:
                 "depth": f"depth/{i:06d}.png",
                 "pose": pose.reshape(-1).tolist(),
             }) + "\n")
+        # A flat grey frame YOLO-World finds nothing in: the pipeline must skip
+        # it (no detections) rather than crash, and it must not appear in any
+        # object's frame_indices.
+        i = n_frames
+        cv2.imwrite(str(root / "rgb" / f"{i:06d}.jpg"), np.full_like(rgb, 128))
+        cv2.imwrite(str(root / "depth" / f"{i:06d}.png"), depth)
+        pose = np.eye(4)
+        pose[:3, 3] = CAMERA_ORIGIN
+        f.write(json.dumps({
+            "frame_index": BLANK_FRAME_INDEX,
+            "observation_id": "obs-blank",
+            "rgb": f"rgb/{i:06d}.jpg",
+            "depth": f"depth/{i:06d}.png",
+            "pose": pose.reshape(-1).tolist(),
+        }) + "\n")
 
 
 class FakeVlm(BaseHTTPRequestHandler):
@@ -160,7 +178,7 @@ def validate(output: Path, captioned: bool) -> list:
         assert (output / obj["pointcloud"]).is_file(), obj["pointcloud"]
         if obj["crop"]:
             assert (output / obj["crop"]).is_file(), obj["crop"]
-        assert obj["frame_indices"] and set(obj["frame_indices"]) <= set(range(10, 15)), obj["frame_indices"]
+        assert obj["frame_indices"] and set(obj["frame_indices"]) <= set(range(10, 10 + N_FRAMES)), obj["frame_indices"]
         if captioned:
             assert obj["label"] == "bus", f"label {obj['label']!r} did not come from the VLM tag"
             assert obj["caption"] == "yellow city bus", f"caption {obj['caption']!r}"
@@ -168,8 +186,68 @@ def validate(output: Path, captioned: bool) -> list:
             assert obj["extra"]["label_source"] == "detector", obj["extra"]
     run = json.loads((output / "run.json").read_text())
     assert run["counts"]["n_objects"] == len(objects)
-    assert run["counts"]["input_frames"] == 5
+    assert run["counts"]["input_frames"] == N_FRAMES + 1
+    assert run["counts"]["frames_with_segments"] <= N_FRAMES, run["counts"]
     return objects
+
+
+def check_empty_after_filter() -> None:
+    """Drive PerceptionPipeline through every "nothing left" path.
+
+    Deterministic, unlike depending on a real frame to produce them: stub
+    segmentation models return (a) no masks, (b) masks all below
+    min_mask_area_px, (c) masks with no valid depth. The stub feature extractor
+    uses torch.stack exactly like CLIP does, so feeding it an empty crop list
+    raises the same "stack expects a non-empty TensorList" seen on real data.
+    """
+    import torch
+    from concept_graphs.perception.PerceptionPipeline import PerceptionPipeline
+
+    h, w = 64, 80
+    rgb = np.full((h, w, 3), 128, dtype=np.uint8)
+    intrinsics = np.array([[50.0, 0, w / 2], [0, 50.0, h / 2], [0, 0, 1]])
+
+    class Features:
+        device = "cpu"
+
+        def __call__(self, crops):
+            return torch.stack([torch.ones(4) for _ in crops])
+
+    def seg(masks):
+        class Seg:
+            last_labels = ["thing"] * len(masks)
+
+            def __call__(self, img):
+                if len(masks) == 0:
+                    return None, None, None
+                boxes = torch.tensor([[10, 10, 60, 50]] * len(masks), dtype=torch.int)
+                return torch.from_numpy(np.stack(masks)), boxes, torch.ones(len(masks))
+        return Seg()
+
+    tiny = np.zeros((h, w), dtype=bool); tiny[20:25, 20:25] = True   # 25 px < 100
+    big = np.zeros((h, w), dtype=bool); big[10:50, 10:60] = True     # 2000 px
+    cases = {
+        "no detections": (seg([]), np.full((h, w), 2.0)),
+        "all masks below min area": (seg([tiny, tiny]), np.full((h, w), 2.0)),
+        "no valid depth": (seg([big]), np.zeros((h, w))),
+    }
+    for name, (model, depth) in cases.items():
+        pipeline = PerceptionPipeline(
+            segmentation_model=model, segment_scoring_method="area", ft_extractor=Features(),
+            inflate_bbox_px=0, depth_trunc=8.0, mask_subtract_contained=False,
+            min_mask_area_px=100, min_points_pcd=100,
+        )
+        out = pipeline(rgb, depth, intrinsics)
+        assert out is None, f"{name}: expected None, got {type(out)}"
+    # And the non-empty path still produces a segment with its label.
+    pipeline = PerceptionPipeline(
+        segmentation_model=seg([big, tiny]), segment_scoring_method="area", ft_extractor=Features(),
+        inflate_bbox_px=0, depth_trunc=8.0, mask_subtract_contained=False,
+        min_mask_area_px=100, min_points_pcd=100,
+    )
+    out = pipeline(rgb, np.full((h, w), 2.0), intrinsics)
+    assert out is not None and len(out["rgb_crops"]) == 1 and out["labels"] == ["thing"], out
+    print("empty-after-filter paths: ok")
 
 
 def main(argv=None) -> int:
@@ -180,6 +258,8 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     from ragmap_bridge.run import main as ragmap_run
+
+    check_empty_after_filter()
 
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="ragmap-smoke-"))
     scene, output = workdir / "input", workdir / "output"

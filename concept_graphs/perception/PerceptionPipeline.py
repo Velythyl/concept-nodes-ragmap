@@ -68,7 +68,7 @@ class PerceptionPipeline:
     ) -> Dict[str, Union[np.ndarray, List[np.ndarray]]]:
         masks, bbox, conf = self.segmentation_model(rgb)
 
-        if masks is None or bbox is None or conf is None:
+        if masks is None or bbox is None or conf is None or len(masks) == 0:
             return None
 
         # Detector class names, when the segmentation model provides them
@@ -118,6 +118,13 @@ class PerceptionPipeline:
 
         # Segment filtering
         keep = areas > self.min_mask_area_px
+        # Degenerate boxes would give empty crops, which CLIP cannot preprocess.
+        keep &= (bbox[:, 2] > bbox[:, 0]) & (bbox[:, 3] > bbox[:, 1])
+        if not keep.any():
+            # Every mask is too small or degenerate: no detections for this frame. Returning
+            # here also keeps the empty crop list away from the feature
+            # extractor (torch.stack of an empty list raises).
+            return None
         masks, bbox, scores = masks[keep], bbox[keep], scores[keep]
         if labels is not None:
             labels = filter_list(labels, keep)
@@ -152,6 +159,9 @@ class PerceptionPipeline:
 
         # Filter empty point clouds. They can happen at this stage because of depth truncation
         mask = [len(p) > self.min_points_pcd for p in pcd_points]
+        if not any(mask):
+            # No segment has enough valid depth (e.g. all truncated/zero).
+            return None
 
         result = dict(
             rgb_crops=filter_list(rgb_crops, mask),
