@@ -2,4 +2,9 @@ defaults:
   - base_tagger
 
 _target_: concept_graphs.vlm.OpenAICaptioner.OpenAICaptioner
-model: gpt-4o
+# Local OpenAI-compatible endpoint (RAGMAP's ragmap-vlm-service / vLLM) when
+# RAGMAP_VLM_BASE_URL is set; otherwise upstream api.openai.com.
+model: ${oc.env:RAGMAP_VLM_MODEL,gpt-4o}
+base_url: ${oc.env:RAGMAP_VLM_BASE_URL,null}
+fold_system_prompt: null  # null: fold into the user message iff base_url is set
+max_tokens: 64

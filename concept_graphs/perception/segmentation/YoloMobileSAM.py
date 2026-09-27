@@ -40,6 +40,10 @@ class YoloMobileSAM(SegmentationModel):
         self.debug_images = debug_images
         self.debug_dir = Path(debug_dir)
         self.debug_counter = 0
+        # Class names of the masks returned by the last __call__, in the same
+        # order. Read by PerceptionPipeline; kept out of the return tuple so the
+        # SegmentationModel interface stays unchanged.
+        self.last_labels = []
 
         # YOLO
         with open(self.yolo_class_path, "r") as f:
@@ -68,6 +72,11 @@ class YoloMobileSAM(SegmentationModel):
             yolo_output = self.yolo.predict(img_bgr, verbose=False)
 
             bbox = yolo_output[0].boxes.xyxy.cpu().numpy()
+            names = yolo_output[0].names
+            self.last_labels = [
+                str(names[int(c)]) if int(c) in names else self.classes[int(c)]
+                for c in yolo_output[0].boxes.cls.cpu().numpy()
+            ]
 
             bbox_transformed = self.sam_predictor.transform.apply_boxes(
                 bbox, original_size=img.shape[:2]

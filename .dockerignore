@@ -1,0 +1,6 @@
+.git
+**/.git
+.github
+outputs
+**/__pycache__
+*.pyc

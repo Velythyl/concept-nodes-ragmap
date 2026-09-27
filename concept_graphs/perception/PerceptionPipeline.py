@@ -71,6 +71,12 @@ class PerceptionPipeline:
         if masks is None or bbox is None or conf is None:
             return None
 
+        # Detector class names, when the segmentation model provides them
+        # (YoloMobileSAM does; the SAM-only models do not).
+        labels = getattr(self.segmentation_model, "last_labels", None)
+        if labels is not None and len(labels) != len(masks):
+            labels = None
+
         # Penalty if original bbox touches image border
         h, w = rgb.shape[:2]
         touches_left = bbox[:, 0] <= 0
@@ -113,6 +119,8 @@ class PerceptionPipeline:
         # Segment filtering
         keep = areas > self.min_mask_area_px
         masks, bbox, scores = masks[keep], bbox[keep], scores[keep]
+        if labels is not None:
+            labels = filter_list(labels, keep)
 
         mask_crops = extract_mask_crops(masks, bbox)
         rgb_crops = extract_rgb_crops(rgb, bbox, mask_crops)
@@ -154,6 +162,8 @@ class PerceptionPipeline:
             scores=scores[mask],
             is_bg=bg[mask],
         )
+        if labels is not None:
+            result["labels"] = filter_list(labels, mask)
 
         # TEMP FIX. This seems to help with memory.
         result = copy.deepcopy(result)

@@ -5,6 +5,7 @@ from .Segment import Segment
 from .SegmentHeap import SegmentHeap
 from .pcd_callbacks.PointCloudCallback import PointCloudCallback
 import uuid
+from collections import Counter
 
 
 class Object:
@@ -23,7 +24,18 @@ class Object:
         max_points_pcd: int = 1200,
         denoising_callback: Union[PointCloudCallback, None] = None,
         downsampling_callback: Union[PointCloudCallback, None] = None,
+        label: Union[str, None] = None,
+        frame_index: Union[int, None] = None,
     ):
+        # Provenance that survives merges: detector class votes (one per
+        # detection) and every frame that contributed a detection.
+        self.label_votes = Counter()
+        if label is not None:
+            self.label_votes[label] += 1
+        self.frame_indices = set()
+        if frame_index is not None:
+            self.frame_indices.add(int(frame_index))
+
         self.segment_heap_size = segment_heap_size
         self.semantic_mode = semantic_mode
         self.timestep_created = timestep_created
@@ -61,6 +73,7 @@ class Object:
             score=score,
             pcd_points=pcd_points,
             pcd_rgb=pcd_rgb,
+            frame_index=frame_index,
         )
 
         self.segments.push(segment)
@@ -147,11 +160,29 @@ class Object:
         segment_added = self.segments.extend(other.segments)
         self.n_segments += other.n_segments
         self.timestep_created = min(self.timestep_created, other.timestep_created)
+        self.merge_provenance(other)
 
         if segment_added:
             self.is_collated = False
 
         return self
+
+    def merge_provenance(self, other: "Object") -> None:
+        # getattr: maps pickled before these fields existed have neither.
+        self.label_votes = getattr(self, "label_votes", Counter()) + getattr(
+            other, "label_votes", Counter()
+        )
+        self.frame_indices = set(getattr(self, "frame_indices", set())) | set(
+            getattr(other, "frame_indices", set())
+        )
+
+    @property
+    def detector_label(self) -> Union[str, None]:
+        votes = getattr(self, "label_votes", None)
+        if not votes:
+            return None
+        # Most detections wins; ties broken alphabetically for determinism.
+        return sorted(votes.items(), key=lambda kv: (-kv[1], kv[0]))[0][0]
 
     def pcd_to_np(self):
         # Make object pickable
@@ -216,6 +247,7 @@ class RunningAverageObject(Object):
 
         self.n_segments += other.n_segments
         self.timestep_created = min(self.timestep_created, other.timestep_created)
+        self.merge_provenance(other)
         self.is_collated = False
 
         return self

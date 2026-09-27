@@ -17,13 +17,19 @@ from concept_graphs.mapping.utils import test_unique_segments
 log = logging.getLogger(__name__)
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="main")
-def main(cfg: DictConfig):
+def build_map(cfg: DictConfig):
+    """Load data and models, run the mapping loop and the post-processing.
+
+    Shared by `main` and the RAGMAP entry point (`ragmap_bridge.run`), so both
+    produce the map through exactly the same pipeline. Returns the dataset, the
+    final map and a stats dict (timings in seconds).
+    """
     set_seed(cfg.seed)
 
     log.info(f"Running algo {cfg.name}...")
 
     log.info("Loading data and models...")
+    load_start = time.time()
     dataset = hydra.utils.instantiate(cfg.dataset)
     dataloader = hydra.utils.instantiate(cfg.dataloader, dataset=dataset)
     log.info(f"Loaded dataset {dataset.name}.")
@@ -33,12 +39,14 @@ def main(cfg: DictConfig):
     perception_pipeline = hydra.utils.instantiate(
         cfg.perception, segmentation_model=segmentation_model, ft_extractor=ft_extractor
     )
+    load_time = time.time() - load_start
 
     log.info("Mapping...")
     progress_bar = tqdm(total=len(dataset))
     progress_bar.set_description(f"Mapping")
     start = time.time()
     n_segments = 0
+    n_frames_with_segments = 0
 
     main_map = hydra.utils.instantiate(cfg.mapping)
 
@@ -46,18 +54,27 @@ def main(cfg: DictConfig):
         segments = perception_pipeline(obs["rgb"], obs["depth"], obs["intrinsics"])
 
         if segments is None:
+            progress_bar.update(1)
             continue
 
         local_map = hydra.utils.instantiate(cfg.mapping)
-        local_map.from_perception(**segments, camera_pose=obs["camera_pose"])
+        local_map.from_perception(
+            **segments,
+            camera_pose=obs["camera_pose"],
+            frame_index=obs.get("frame_index"),
+        )
 
         main_map += local_map
 
         progress_bar.update(1)
         n_segments += len(local_map)
+        n_frames_with_segments += 1
         progress_bar.set_postfix(objects=len(main_map), map_segments=main_map.n_segments, detected_segments=n_segments)
+    progress_bar.close()
+    loop_time = time.time() - start
 
     # Postprocessing
+    post_start = time.time()
     main_map.filter_min_segments(n_min_segments=cfg.final_min_segments, grace=False)
     main_map.downsample_objects()
     for _ in range(2):
@@ -73,6 +90,27 @@ def main(cfg: DictConfig):
     test_unique_segments(main_map)
     log.info("Objects in final map: %d" % n_objects)
     log.info(f"fps: {fps:.2f}")
+
+    stats = dict(
+        fps=fps,
+        mapping_time=mapping_time,
+        n_objects=n_objects,
+        n_frames=len(dataset),
+        n_frames_with_segments=n_frames_with_segments,
+        n_detected_segments=n_segments,
+        load_time=load_time,
+        loop_time=loop_time,
+        postprocess_time=stop - post_start,
+    )
+    return dataset, main_map, stats
+
+
+@hydra.main(version_base=None, config_path="conf", config_name="main")
+def main(cfg: DictConfig):
+    dataset, main_map, map_stats = build_map(cfg)
+    fps = map_stats["fps"]
+    mapping_time = map_stats["mapping_time"]
+    n_objects = map_stats["n_objects"]
 
     if cfg.caption and hasattr(cfg, "vlm_caption"):
         log.info("Captioning objects...")

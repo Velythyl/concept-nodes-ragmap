@@ -12,6 +12,7 @@ class Segment:
         pcd_points: np.ndarray,
         pcd_rgb: np.ndarray,
         camera_pose: np.ndarray,
+        frame_index: int = None,
     ):
         self.rgb = rgb
         self.mask = mask
@@ -20,6 +21,7 @@ class Segment:
         self.pcd_points = pcd_points
         self.pcd_rgb = pcd_rgb
         self.camera_pose = camera_pose
+        self.frame_index = frame_index
         self.id = uuid.uuid4()
 
     def __lt__(self, other):

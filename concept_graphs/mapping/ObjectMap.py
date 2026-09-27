@@ -155,6 +155,8 @@ class ObjectMap:
         pcd_rgb: List[np.ndarray],
         camera_pose: np.ndarray,
         is_bg: np.ndarray,
+        labels: List[str] = None,
+        frame_index: int = None,
     ):
         n_objects = len(rgb_crops)
         assert (
@@ -178,6 +180,8 @@ class ObjectMap:
                     camera_pose=camera_pose,
                     score=float(scores[i]),
                     timestep_created=self.n_updates,
+                    label=labels[i] if labels is not None else None,
+                    frame_index=frame_index,
                 )
                 self.append(object)
 

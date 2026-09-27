@@ -1,0 +1,14 @@
+# RAGMAP object_mapping input (meta.json + frames.jsonl). Intrinsics, image
+# size and depth_scale are read from meta.json; set them here only to override.
+_target_: concept_graphs.datasets.RagmapScene.RagmapScene
+dataset_name: "ragmap"
+base_path: /input
+scene: scene
+resized_width: -1
+resized_height: -1
+sequence_start: 0
+sequence_end: -1
+sequence_stride: 1
+relative_pose: False
+point_cloud: false
+depth_trunc: 8.0
