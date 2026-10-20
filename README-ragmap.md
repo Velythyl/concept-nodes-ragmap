@@ -33,6 +33,20 @@ podman run --rm --arch amd64 \
   `sim_thresh=0.89`. Other flags: `--stride N`, `--max-frames N`,
   `--device cpu`, `--algo CG`.
 
+## Encoder over HTTP (`ft_extraction=http`)
+
+The object features can come from a RAGMAP `ragmap-encoder-service` instead of
+in-process open_clip ViT-H-14: pass the hydra override `ft_extraction=http` and
+`-e RAGMAP_ENCODER_BASE_URL=http://127.0.0.1:<port>` (with `--network host`;
+optionally `-e RAGMAP_ENCODER_PROFILE=<id>` to refuse any other encoder). The
+crops are the same (unmasked bbox + `inflate_bbox_px`), sent as PNG in requests
+of `ft_extraction.batch_size` crops; the service applies its own preprocessing
+and returns L2-normalised float32 rows of its dimension. Any error status fails
+the run. No CLIP weights are loaded and the HF cache mount is not needed.
+`run.json` `encoder` records the service's profile, model, revision and
+dimension (builtin runs record `mode: builtin` and the open_clip model). The
+default path (no override) is unchanged.
+
 ## Weights
 
 | weight | where |

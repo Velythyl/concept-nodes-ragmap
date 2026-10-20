@@ -102,6 +102,9 @@ def build_map(cfg: DictConfig):
         loop_time=loop_time,
         postprocess_time=stop - post_start,
     )
+    # The HTTP extractor reports the service's identity; in-process CLIP has none.
+    if hasattr(ft_extractor, "describe"):
+        stats["encoder"] = ft_extractor.describe()
     return dataset, main_map, stats
 
 

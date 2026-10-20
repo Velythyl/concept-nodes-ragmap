@@ -16,6 +16,13 @@ sends them to a local OpenAI-compatible server only: RAGMAP_VLM_BASE_URL must
 be set (e.g. http://127.0.0.1:PORT) and RAGMAP_VLM_MODEL names the model
 (for ragmap-vlm-service: its profile, e.g. qwen3_vl_8b). The hosted OpenAI API
 is never used by this entry point.
+
+Object features come from in-process open_clip ViT-H-14 (the default,
+`ft_extraction=CLIP_H14` via the algo) or, with the hydra override
+`ft_extraction=http`, from a RAGMAP `ragmap-encoder-service` at
+RAGMAP_ENCODER_BASE_URL (optionally pinned to RAGMAP_ENCODER_PROFILE). In HTTP
+mode no CLIP weights are loaded in the container and the HF cache is not needed;
+run.json `encoder` records the service's profile, revision and dimension.
 """
 
 from __future__ import annotations
@@ -124,6 +131,16 @@ def resolve_vlm() -> Dict[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def ft_extraction_choice(overrides: List[str]) -> Optional[str]:
+    """The `ft_extraction=<name>` group override, if any (the last one wins, as in hydra)."""
+
+    choice = None
+    for item in overrides:
+        if item.startswith("ft_extraction="):
+            choice = item.split("=", 1)[1]
+    return choice
+
+
 def compose_config(args: argparse.Namespace, n_input_frames: int):
     from hydra import compose, initialize_config_dir
 
@@ -141,10 +158,12 @@ def compose_config(args: argparse.Namespace, n_input_frames: int):
         f"caption={'true' if args.caption else 'false'}",
         f"tag={'true' if args.caption else 'false'}",
         "save_map=false",
-        # Default Hugging Face cache (HF_HOME) instead of the checkpoint dir, so
-        # the ViT-H-14 weights come from the mounted HF cache.
-        "ft_extraction.cache_dir=null",
     ]
+    if ft_extraction_choice(args.overrides) != "http":
+        # Default Hugging Face cache (HF_HOME) instead of the checkpoint dir, so
+        # the ViT-H-14 weights come from the mounted HF cache. The HTTP extractor
+        # loads no weights and has no cache_dir.
+        overrides.append("ft_extraction.cache_dir=null")
     if args.max_frames and args.max_frames > 0:
         overrides.append(f"dataset.sequence_end={min(args.max_frames, n_input_frames)}")
     overrides += list(args.overrides)
@@ -300,6 +319,12 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     vlm = resolve_vlm() if args.caption else None
+    http_encoder = ft_extraction_choice(args.overrides) == "http"
+    if http_encoder and not (os.environ.get("RAGMAP_ENCODER_BASE_URL") or "").strip():
+        raise SystemExit(
+            "ft_extraction=http needs RAGMAP_ENCODER_BASE_URL (a ragmap-encoder-service, "
+            "e.g. http://127.0.0.1:8790)."
+        )
 
     sys.path.insert(0, str(REPO_ROOT))
     from concept_graphs.datasets.RagmapScene import read_frames, read_meta
@@ -341,10 +366,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.caption:
         caption_info.update(vlm or {})
 
+    if http_encoder:
+        encoder_info = map_stats["encoder"]
+    else:
+        encoder_info = {
+            "mode": "builtin",
+            "target": cfg.ft_extraction.get("_target_"),
+            "model_name": cfg.ft_extraction.get("model_name"),
+            "pretrained": cfg.ft_extraction.get("pretrained"),
+        }
+
     t = time.time()
     export_counts = export_objects(main_map, args.output, captioned=bool(args.caption))
     timings["export"] = time.time() - t
     timings["total"] = time.time() - t0
+    encoder_info["dim"] = encoder_info.get("dim") or export_counts["clip_feature_dim"]
+    if export_counts["clip_feature_dim"] not in (None, encoder_info["dim"]):
+        raise SystemExit(
+            f"object features are {export_counts['clip_feature_dim']}-d but the encoder reports {encoder_info['dim']}"
+        )
 
     run = {
         "schema": SCHEMA,
@@ -368,6 +408,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "timings_seconds": timings,
         "fps": map_stats["fps"],
         "caption": caption_info,
+        "encoder": encoder_info,
         "versions": _versions(),
         "device": args.device,
         "gpu": torch.cuda.get_device_name(0) if args.device.startswith("cuda") else None,

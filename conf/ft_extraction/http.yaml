@@ -1,0 +1,13 @@
+# Object features from a RAGMAP `ragmap-encoder-service` instead of in-process
+# open_clip (`ft_extraction=http`). The service owns the encoder; its /healthz
+# identity (profile, revision, dim) is recorded in run.json. Same crops as
+# CLIP_H14 (unmasked bbox + inflate_bbox_px), one request per `batch_size` crops.
+_target_: concept_graphs.perception.ft_extraction.HTTP.HttpFeatureExtractor
+base_url: ${oc.env:RAGMAP_ENCODER_BASE_URL,null}
+# When set (env RAGMAP_ENCODER_PROFILE), the service must serve exactly this profile.
+expected_profile: ${oc.env:RAGMAP_ENCODER_PROFILE,null}
+device: ${device}
+batch_size: 256
+timeout: 600
+# Seconds to keep retrying an unreachable service at start-up (0: fail at once).
+connect_wait: 0
